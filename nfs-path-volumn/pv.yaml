@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nfs-volume-test
+  labels:
+    app: nfs-volume-test
+spec:
+  containers:
+  - name: nfs-volume-test
+    image: nginx
+    ports:
+    - containerPort: 80
+    volumeMounts:
+    - mountPath: /opt/spark/conf
+      name: spark-conf
+  volumes:
+  - name: spark-conf
+    nfs:
+      server: 10.68.100.103
+      path: "/gs-files/bigdata/uat/spark"

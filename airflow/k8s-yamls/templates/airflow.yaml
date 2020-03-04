@@ -1,0 +1,184 @@
+# apiVersion: rbac.authorization.k8s.io/v1beta1
+# kind: Role
+# metadata:
+#   name: airflow
+#   namespace: airflow
+# rules:
+# - apiGroups: [""]
+#   resources:
+#   - pods
+#   verbs: ["create", "get", "delete", "list", "watch"]
+# - apiGroups: [""]
+#   resources:
+#   - "pods/log"
+#   verbs: ["get", "list"]
+# - apiGroups: [""]
+#   resources:
+#   - "pods/exec"
+#   verbs: ["create", "get"]
+# ---
+# kind: RoleBinding
+# apiVersion: rbac.authorization.k8s.io/v1beta1
+# metadata:
+#   name: airflow
+#   namespace: airflow
+# subjects:
+#   - kind: ServiceAccount # May be "User", "Group" or "ServiceAccount"
+#     name: default
+#     namespace: airflow
+# roleRef:
+#   kind: Role
+#   name: airflow
+#   apiGroup: rbac.authorization.k8s.io
+apiVersion: rbac.authorization.k8s.io/v1beta1
+kind: ClusterRoleBinding
+metadata:
+  name: airflow
+  namespace: airflow
+subjects:
+  - kind: ServiceAccount
+    # Reference to upper's `metadata.name`
+    name: default
+    # Reference to upper's `metadata.namespace`
+    namespace: airflow
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: airflow
+  namespace: airflow
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      name: airflow
+  template:
+    metadata:
+      labels:
+        name: airflow
+    spec:
+      securityContext:
+        runAsUser: 801
+        runAsGroup: 801
+        fsGroup: 801
+      containers:
+      - name: webserver
+        image: docker-registry.51uuabc.com/airflow:1.10.5
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: webserver
+          containerPort: 8080
+        args: ["webserver"]
+        securityContext:
+          runAsUser: 801
+        env:
+        - name: AIRFLOW_KUBE_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: AIRFLOW_HOME
+          value: /opt/airflow/
+        - name: SQL_ALCHEMY_CONN
+          valueFrom:
+            secretKeyRef:
+              name: airflow-secrets
+              key: sql_alchemy_conn
+        volumeMounts:
+        - name: airflow-configmap
+          mountPath: /opt/airflow/airflow.cfg
+          subPath: airflow.cfg
+        - name: airflow-dags
+          mountPath: /opt/airflow/src
+          readOnly: true
+        - name: airflow-logs
+          mountPath: /opt/airflow/logs
+#        readinessProbe:
+#          initialDelaySeconds: 5
+#          timeoutSeconds: 5
+#          periodSeconds: 5
+#          httpGet:
+#            path: /login
+#            port: 8080
+       startupProbe:
+         #livenessProbe:
+         #initialDelaySeconds: 5
+         timeoutSeconds: 5
+         failureThreshold: 5
+         periodSeconds: 10
+         httpGet:
+           path: /login
+           port: 8080
+      - name: scheduler
+        image: docker-registry.51uuabc.com/airflow:1.10.5
+        imagePullPolicy: IfNotPresent
+        args: ["scheduler"]
+        securityContext:
+          runAsUser: 801
+        env:
+        - name: AIRFLOW_KUBE_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: AIRFLOW_HOME
+          value: /opt/airflow/
+        - name: SQL_ALCHEMY_CONN
+          valueFrom:
+            secretKeyRef:
+              name: airflow-secrets
+              key: sql_alchemy_conn
+        volumeMounts:
+        - name: airflow-configmap
+          mountPath: /opt/airflow/airflow.cfg
+          subPath: airflow.cfg
+        - name: airflow-dags
+          mountPath: /opt/airflow/src
+          readOnly: true
+        - name: airflow-logs
+          mountPath: /opt/airflow/logs
+      volumes:
+      - name: airflow-dags
+        persistentVolumeClaim:
+          claimName: airflow-dags
+      - name: airflow-logs
+        persistentVolumeClaim:
+          claimName: airflow-logs
+      - name: airflow-configmap
+        configMap:
+          name: airflow-configmap
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: airflow
+  namespace: airflow
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
+  selector:
+    name: airflow
+---
+apiVersion: networking.k8s.io/v1beta1
+kind: Ingress
+metadata:
+  name: airflow-webserver
+  namespace: airflow
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+
+spec:
+  rules:
+  - host: airflow.kube.abc
+    http:
+      paths:
+      - path:
+        backend:
+          serviceName: airflow
+          servicePort: 8080
+

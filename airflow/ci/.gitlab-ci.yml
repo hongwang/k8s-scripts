@@ -1,0 +1,58 @@
+# image:
+#   name: golang:1.10.3-stretch
+#   entrypoint: ["/bin/sh", "-c"]
+
+stages:
+  - review
+
+# test:
+#   stage: test
+#   script:
+#     - echo "hello @ test"
+#   tags:
+#     - dev-bigdata-k8s
+#   only:
+#     - develop
+
+
+# deploy:
+#   stage: deploy
+#   script:
+#     - echo "hello @ deploy"
+#   tags:
+#     - dev-bigdata-k8s
+#   only:
+#     - develop
+
+deploy:
+  image: cnych/kubectl
+  stage: review
+  script:
+    - kubectl version
+    - cd scripts/ci
+    - sed -i "s/__CI_JOB_ID__/${CI_JOB_ID}/" pod-sync-repo.yaml
+    #- kubectl scale --replicas=0 deployment/airflow -n airflow
+    #- kubectl rollout status deployment airflow -n airflow
+    - kubectl apply -f pod-sync-repo.yaml
+    - |
+      pod_name=sync-repo-volume-${CI_JOB_ID}
+      while :; do
+        st=$(kubectl get pod $pod_name -o jsonpath={.status.phase} -n airflow)
+        if [ "$st" == "Succeeded" ];then
+          echo "deleting"
+          kubectl delete pod $pod_name -n airflow
+          break
+        else
+          echo "waiting 5s"
+          sleep 5s
+        fi
+      done
+    # cause so many replicaset
+    #- kubectl patch deployment airflow -p "{\"spec\":{\"template\":{\"metadata\":{\"annotations\":{\"redeploy\":\"$(date +'%s')\"}}}}}" -n airflow
+    # update web ui immediately
+    - kubectl scale --replicas=1 deployment/airflow -n airflow
+    - kubectl rollout status deployment airflow -n airflow
+  tags:
+    - dev-bigdata-k8s
+  only:
+    - develop
